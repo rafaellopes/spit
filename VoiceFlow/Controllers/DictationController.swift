@@ -336,6 +336,14 @@ class DictationController: ObservableObject {
             // Aplicar substituições de vocabulário
             text = vocabularyManager.apply(to: text)
 
+            // Adicionar ponto final se o texto não termina com pontuação.
+            // Garante separação correcta quando o utilizador abre uma nova sessão
+            // num campo que já tem texto (ex.: carta, email, nota).
+            let terminalPunctuation: Set<Character> = [".", "!", "?", "…", ":", ";", ",", "\"", "'", "»", ")"]
+            if let last = text.last, !terminalPunctuation.contains(last) {
+                text += "."
+            }
+
             guard !text.isEmpty else {
                 vfLog("Empty transcription")
                 state = .idle

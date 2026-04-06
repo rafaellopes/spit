@@ -13,9 +13,9 @@ enum DictationState: Equatable {
     var displayName: String {
         switch self {
         case .idle:           return String(localized: "Ready")
-        case .recording:      return String(localized: "Recording...")
-        case .processing:     return String(localized: "Processing...")
-        case .injecting:      return String(localized: "Inserting text...")
+        case .recording:      return String(localized: "Listening…")
+        case .processing:     return String(localized: "Transcribing…")
+        case .injecting:      return String(localized: "Inserting text…")
         case .error(let msg): return String(format: String(localized: "Error: %@"), msg)
         }
     }
