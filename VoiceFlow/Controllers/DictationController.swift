@@ -14,6 +14,7 @@ class DictationController: ObservableObject {
     @Published private(set) var state: DictationState = .idle
     @Published private(set) var lastResult: DictationResult?
     @Published private(set) var audioLevel: Float = -60.0  // dB
+    @Published private(set) var isAccessibilityTrusted: Bool = false
 
     // MARK: - Dependências
 
@@ -60,7 +61,27 @@ class DictationController: ObservableObject {
         setupAudioRecorder()
         vfLog("DictationController.setup() — audioRecorder setup done")
         setupHotkey()
+        startAccessibilityMonitor()
         vfLog("DictationController.setup() — DONE ✅")
+    }
+
+    // MARK: - Accessibility Monitor
+
+    private var axTimer: Timer?
+
+    /// Verifica AX a cada 2s e publica o resultado — garante que a UI reflecte
+    /// mudanças sem reiniciar o app (ex.: utilizador concede permissão a meio da sessão).
+    private func startAccessibilityMonitor() {
+        isAccessibilityTrusted = AXIsProcessTrusted()
+        axTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            let trusted = AXIsProcessTrusted()
+            DispatchQueue.main.async {
+                if self?.isAccessibilityTrusted != trusted {
+                    self?.isAccessibilityTrusted = trusted
+                    vfLog("Accessibility changed → trusted: \(trusted)")
+                }
+            }
+        }
     }
 
     func teardown() {

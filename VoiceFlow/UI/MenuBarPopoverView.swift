@@ -13,6 +13,7 @@ struct MenuBarPopoverView: View {
         VStack(spacing: 0) {
             headerView
             Divider()
+            accessibilityWarningView   // banner vermelho quando AX não está concedida
             statusView
                 .padding(.vertical, 12)
                 .padding(.horizontal, 16)
@@ -115,6 +116,49 @@ struct MenuBarPopoverView: View {
                 .font(.caption)
                 .lineLimit(3)
                 .foregroundColor(.primary)
+        }
+    }
+
+    // MARK: - Accessibility Warning
+
+    @ViewBuilder
+    private var accessibilityWarningView: some View {
+        if !dictationController.isAccessibilityTrusted {
+            VStack(spacing: 4) {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.lock.fill")
+                        .foregroundColor(.white)
+                        .font(.caption)
+                    Text("Accessibility permission required")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.white)
+                    Spacer()
+                }
+                Text("Text won't be typed automatically. Grant access in System Settings → Privacy → Accessibility.")
+                    .font(.caption2)
+                    .foregroundColor(.white.opacity(0.85))
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Button {
+                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+                } label: {
+                    Text("Open Settings")
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .foregroundColor(.red)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(Color.white.opacity(0.9))
+                        .cornerRadius(6)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(Color.red.opacity(0.85))
+
+            Divider()
         }
     }
 
