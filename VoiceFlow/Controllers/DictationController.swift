@@ -73,18 +73,17 @@ class DictationController: ObservableObject {
 
     private func setupHotkey() {
         let settings = loadSettings()
-        hotkeyManager.register(keyCode: settings.hotkeyKeyCode, modifiers: settings.hotkeyModifiers)
-        hotkeyManager.onHotkeyPressed = { [weak self] in
-            vfLog("onHotkeyPressed callback fired!")
-            Task { @MainActor in
-                self?.handleHotkeyPressed()
+        if settings.pttEnabled {
+            // PTT usa a mesma tecla que o toggle — não registar toggle para evitar conflito
+            setupPTT(keyCode: settings.hotkeyKeyCode, modifiers: settings.hotkeyModifiers)
+        } else {
+            hotkeyManager.register(keyCode: settings.hotkeyKeyCode, modifiers: settings.hotkeyModifiers)
+            hotkeyManager.onHotkeyPressed = { [weak self] in
+                vfLog("onHotkeyPressed callback fired!")
+                Task { @MainActor in self?.handleHotkeyPressed() }
             }
         }
-        vfLog("Hotkey setup — keyCode:\(settings.hotkeyKeyCode) modifiers:\(settings.hotkeyModifiers)")
-
-        if settings.pttEnabled {
-            setupPTT(keyCode: settings.pttKeyCode, modifiers: settings.pttModifiers)
-        }
+        vfLog("Hotkey setup — keyCode:\(settings.hotkeyKeyCode) modifiers:\(settings.hotkeyModifiers) ptt:\(settings.pttEnabled)")
     }
 
     private func setupPTT(keyCode: UInt32, modifiers: UInt32) {
@@ -112,23 +111,36 @@ class DictationController: ObservableObject {
         settings.hotkeyKeyCode = keyCode
         settings.hotkeyModifiers = modifiers
         saveSettings(settings)
-        hotkeyManager.register(keyCode: keyCode, modifiers: modifiers)
+
+        if settings.pttEnabled {
+            // PTT usa a mesma tecla — actualizar o registo PTT
+            hotkeyManager.unregisterPTT()
+            setupPTT(keyCode: keyCode, modifiers: modifiers)
+        } else {
+            hotkeyManager.register(keyCode: keyCode, modifiers: modifiers)
+        }
         vfLog("Hotkey updated — keyCode:\(keyCode) modifiers:\(modifiers)")
     }
 
-    func updatePTT(enabled: Bool, keyCode: UInt32, modifiers: UInt32) {
+    func updatePTT(enabled: Bool) {
         var settings = loadSettings()
         settings.pttEnabled = enabled
-        settings.pttKeyCode = keyCode
-        settings.pttModifiers = modifiers
         saveSettings(settings)
 
         if enabled {
-            setupPTT(keyCode: keyCode, modifiers: modifiers)
+            // Activar PTT: desregistar toggle e registar PTT na mesma tecla
+            hotkeyManager.unregister()
+            setupPTT(keyCode: settings.hotkeyKeyCode, modifiers: settings.hotkeyModifiers)
         } else {
+            // Desactivar PTT: desregistar PTT e voltar ao toggle
             hotkeyManager.unregisterPTT()
+            hotkeyManager.register(keyCode: settings.hotkeyKeyCode, modifiers: settings.hotkeyModifiers)
+            hotkeyManager.onHotkeyPressed = { [weak self] in
+                vfLog("onHotkeyPressed callback fired!")
+                Task { @MainActor in self?.handleHotkeyPressed() }
+            }
         }
-        vfLog("PTT updated — enabled:\(enabled) keyCode:\(keyCode) modifiers:\(modifiers)")
+        vfLog("PTT updated — enabled:\(enabled)")
     }
 
     private func setupAudioRecorder() {

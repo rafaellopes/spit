@@ -450,141 +450,40 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Push-to-talk")
                         .fontWeight(.medium)
-                    Text("Hold key → record. Release → transcribe.")
+                    Text("Hold the dictation key → record. Release → transcribe.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
             }
             .onChange(of: settings.pttEnabled) { enabled in
                 save()
-                dictationController.updatePTT(
-                    enabled: enabled,
-                    keyCode: settings.pttKeyCode,
-                    modifiers: settings.pttModifiers
-                )
-                if !enabled {
-                    isRecordingPTT = false
-                    stopRecordingPTTShortcut()
-                }
+                dictationController.updatePTT(enabled: enabled)
             }
 
+            // Mostrar a tecla activa (a mesma do toggle) em modo leitura
             if settings.pttEnabled {
-                Divider()
-                pttShortcutRow
-            }
-        }
-    }
-
-    private var pttShortcutRow: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 10) {
-                Text("PTT key")
-                    .foregroundColor(.secondary)
-                Spacer()
-
-                if isRecordingPTT {
-                    Text("Press any key…")
-                        .font(.system(size: 13))
-                        .foregroundColor(.secondary)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .strokeBorder(Color.accentColor, lineWidth: 1.5)
-                                .background(Color.accentColor.opacity(0.06).cornerRadius(6))
-                        )
-
-                    Button("Cancel") { stopRecordingPTTShortcut() }
-                        .buttonStyle(.plain)
+                HStack(spacing: 4) {
+                    Text("Key:")
                         .font(.caption)
                         .foregroundColor(.secondary)
-                } else {
-                    HStack(spacing: 3) {
-                        let mods = modifierSymbols(settings.pttModifiers)
-                        let key  = keyLabel(settings.pttKeyCode)
-                        ForEach(Array(mods.enumerated()), id: \.offset) { _, ch in
-                            keyBadge(String(ch))
-                        }
-                        keyBadge(key)
+                    let mods = modifierSymbols(settings.hotkeyModifiers)
+                    let key  = keyLabel(settings.hotkeyKeyCode)
+                    ForEach(Array(mods.enumerated()), id: \.offset) { _, ch in
+                        keyBadge(String(ch))
                     }
-
-                    Button("Change") { startRecordingPTTShortcut() }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
+                    keyBadge(key)
+                    Text("(same as dictation shortcut)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
+                .padding(.top, 2)
             }
-
-            if let conflict = pttConflict {
-                Label(conflict, systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption)
-                    .foregroundColor(.orange)
-            }
-
-            // Aviso quando sem modificador (captura TODAS as pressões)
-            if settings.pttModifiers == 0 && !isRecordingPTT {
-                Label(
-                    "Single key intercepts all typing while held — prefer F-keys or add a modifier.",
-                    systemImage: "exclamationmark.triangle"
-                )
-                .font(.caption)
-                .foregroundColor(.orange)
-            }
-        }
-        .onDisappear { stopRecordingPTTShortcut() }
-    }
-
-    // MARK: - PTT Recording
-
-    private func startRecordingPTTShortcut() {
-        pttConflict = nil
-        isRecordingPTT = true
-
-        // Globe via flagsChanged
-        pttGlobeMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged]) { [self] event in
-            guard event.keyCode == 63 else { return event }
-            if event.modifierFlags.contains(.function) {
-                if 63 == settings.hotkeyKeyCode && settings.hotkeyModifiers == 0 {
-                    pttConflict = "Conflicts with the dictation toggle shortcut."
-                } else {
-                    applyNewPTT(keyCode: 63, modifiers: 0)
-                }
-            }
-            return nil
-        }
-
-        pttEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [self] event in
-            if event.keyCode == 53 {
-                stopRecordingPTTShortcut()
-                return nil
-            }
-
-            let carbonKey = UInt32(event.keyCode)
-            let carbonMods = toCarbonModifiers(
-                event.modifierFlags.intersection([.command, .shift, .option, .control])
-            )
-
-            if carbonKey == settings.hotkeyKeyCode && carbonMods == settings.hotkeyModifiers {
-                pttConflict = "Conflicts with the dictation toggle shortcut."
-                return nil
-            }
-
-            applyNewPTT(keyCode: carbonKey, modifiers: carbonMods)
-            return nil
         }
     }
 
-    private func applyNewPTT(keyCode: UInt32, modifiers: UInt32) {
-        stopRecordingPTTShortcut()
-        pttConflict = nil
-        settings.pttKeyCode = keyCode
-        settings.pttModifiers = modifiers
-        save()
-        dictationController.updatePTT(
-            enabled: settings.pttEnabled,
-            keyCode: keyCode,
-            modifiers: modifiers
-        )
-    }
+    // pttShortcutRow removido — PTT usa a mesma tecla do toggle
+
+    // PTT Recording removido — PTT usa sempre a mesma tecla do toggle (hotkeyKeyCode/Modifiers)
 
     private func stopRecordingPTTShortcut() {
         isRecordingPTT = false

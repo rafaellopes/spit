@@ -173,17 +173,11 @@ class TextInjector {
         keyDown.flags = .maskCommand
         keyUp.flags = .maskCommand
 
-        if let pid = targetPID, pid > 0 {
-            // Send directly to the target process — most reliable
-            keyDown.postToPid(pid)
-            keyUp.postToPid(pid)
-            vfLog("⌘V sent via postToPid(\(pid))")
-        } else {
-            // Fallback: broadcast to HID event tap
-            keyDown.post(tap: .cghidEventTap)
-            keyUp.post(tap: .cghidEventTap)
-            vfLog("⌘V sent via HID event tap (no PID)")
-        }
+        // cgSessionEventTap funciona com Accessibility mesmo em App Sandbox.
+        // postToPid() fica bloqueado em sandbox — não o usar.
+        keyDown.post(tap: .cgSessionEventTap)
+        keyUp.post(tap: .cgSessionEventTap)
+        vfLog("⌘V sent via cgSessionEventTap (target: \(targetPID.map(String.init) ?? "nil"))")
 
         return true
     }
