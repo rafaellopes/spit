@@ -177,9 +177,51 @@ class HotkeyManager {
         onPTTKeyUp = nil
     }
 
+    // MARK: - Read Selection (TTS) Hotkey
+
+    var onTTSPressed: (() -> Void)?
+    private var ttsGlobalMonitor: Any?
+    private var ttsLocalMonitor: Any?
+    private var ttsKeyCode: UInt32 = 0
+    private var ttsModifiers: UInt32 = 0
+
+    func registerTTS(keyCode: UInt32, modifiers: UInt32) {
+        unregisterTTS()
+        ttsKeyCode = keyCode
+        ttsModifiers = modifiers
+
+        ttsGlobalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
+            self?.handleTTSEvent(event)
+        }
+        ttsLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event -> NSEvent? in
+            guard let self else { return event }
+            if self.handleTTSEvent(event) { return nil }
+            return event
+        }
+        vfLog("TTS hotkey registado — keyCode:\(keyCode) modifiers:\(modifiers)")
+    }
+
+    @discardableResult
+    private func handleTTSEvent(_ event: NSEvent) -> Bool {
+        guard UInt32(event.keyCode) == ttsKeyCode else { return false }
+        guard !event.isARepeat else { return false }
+        let mods = carbonModifiers(from: event)
+        guard mods == ttsModifiers else { return false }
+        DispatchQueue.main.async { [weak self] in self?.onTTSPressed?() }
+        return true
+    }
+
+    func unregisterTTS() {
+        if let m = ttsGlobalMonitor { NSEvent.removeMonitor(m); ttsGlobalMonitor = nil }
+        if let m = ttsLocalMonitor  { NSEvent.removeMonitor(m); ttsLocalMonitor  = nil }
+        onTTSPressed = nil
+        vfLog("TTS hotkey desregistado")
+    }
+
     deinit {
         unregister()
         unregisterPTT()
+        unregisterTTS()
     }
 
     // MARK: - Helpers

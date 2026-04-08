@@ -101,16 +101,17 @@ class WhisperService {
     // Usa verbose_json quando language="auto" para obter idioma detectado.
     // Retorna WhisperResult com texto e idioma detectado.
 
-    func transcribe(audioURL: URL, language: String, apiKey: String, vocabularyHint: String) async throws -> WhisperResult {
+    func transcribe(audioURL: URL, language: String, apiKey: String, vocabularyHint: String,
+                    endpoint: URL? = nil, model: String? = nil) async throws -> WhisperResult {
         let fileSize = (try? audioURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
         if fileSize > maxFileSizeBytes { throw WhisperError.fileTooLarge }
 
         let boundary = "Spit-\(UUID().uuidString)"
-        var request = URLRequest(url: apiURL)
+        var request = URLRequest(url: endpoint ?? apiURL)
         request.httpMethod = "POST"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 30
+        request.timeoutInterval = 180
 
         var body = Data()
         let crlf = "\r\n"
@@ -124,7 +125,7 @@ class WhisperService {
 
         body.append("--\(boundary)\(crlf)".data(using: .utf8)!)
         body.append("Content-Disposition: form-data; name=\"model\"\(crlf)\(crlf)".data(using: .utf8)!)
-        body.append("whisper-1\(crlf)".data(using: .utf8)!)
+        body.append("\(model ?? "whisper-1")\(crlf)".data(using: .utf8)!)
 
         if !language.isEmpty && language != "auto" {
             body.append("--\(boundary)\(crlf)".data(using: .utf8)!)

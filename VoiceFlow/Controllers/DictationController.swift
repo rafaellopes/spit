@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import Combine
+import UserNotifications
 
 // MARK: - DictationController
 // Orquestra todo o fluxo de ditação:
@@ -15,19 +16,30 @@ class DictationController: ObservableObject {
     @Published private(set) var lastResult: DictationResult?
     @Published private(set) var audioLevel: Float = -60.0  // dB
     @Published private(set) var isAccessibilityTrusted: Bool = false
+    @Published private(set) var pendingRetryURL: URL? = nil
+    private var pendingRetryDuration: TimeInterval = 0
+    private var retryCleanupTask: Task<Void, Never>? = nil
 
     // MARK: - Dependências
 
     private var audioRecorder: AudioRecorder!
     private var whisperService: WhisperService!
+    private var proxyService: ProxyTranscriptionService!
+    private var localWhisperService: LocalWhisperService!
     private var focusDetector: FocusDetector!
     private var textInjector: TextInjector!
     var vocabularyManager: VocabularyManager!
     var creditsManager: CreditsManager!
+    var licenseManager: LicenseManager = .shared
 
     private var hotkeyManager: HotkeyManager!
     private var liveSpeechRecognizer: LiveSpeechRecognizer!
     private var dictationTask: Task<Void, Never>?
+
+    /// Utilizador premiu a hotkey enquanto o modelo local ainda estava a carregar.
+    /// Quando isReady disparar, inicia a ditação automaticamente.
+    private var pendingDictationAfterLoad = false
+    private var modelReadyCancellable: AnyCancellable?
 
     /// Last language detected by Whisper (e.g. "pt", "en") — used for live preview on next recording.
     /// Only populated when settings.language == "auto".
@@ -46,6 +58,15 @@ class DictationController: ObservableObject {
         vfLog("  - AudioRecorder OK")
         whisperService = WhisperService()
         vfLog("  - WhisperService OK")
+        proxyService = ProxyTranscriptionService()
+        vfLog("  - ProxyTranscriptionService OK")
+        localWhisperService = LocalWhisperService.shared
+        vfLog("  - LocalWhisperService OK")
+        // Auto-load local model on startup if engine is set to local
+        let startupSettings = loadSettings()
+        if startupSettings.transcriptionEngine == .local {
+            Task { await LocalWhisperService.shared.load(model: startupSettings.localModel) }
+        }
         focusDetector = FocusDetector()
         vfLog("  - FocusDetector OK")
         textInjector = TextInjector()
@@ -54,6 +75,8 @@ class DictationController: ObservableObject {
         vfLog("  - VocabularyManager OK")
         creditsManager = CreditsManager.shared
         vfLog("  - CreditsManager OK")
+        _ = TTSService.shared          // força inicialização na main thread
+        vfLog("  - TTSService OK")
         hotkeyManager = HotkeyManager()
         vfLog("  - HotkeyManager OK")
         liveSpeechRecognizer = LiveSpeechRecognizer()
@@ -61,6 +84,7 @@ class DictationController: ObservableObject {
         setupAudioRecorder()
         vfLog("DictationController.setup() — audioRecorder setup done")
         setupHotkey()
+        setupTTSHotkey()
         startAccessibilityMonitor()
         vfLog("DictationController.setup() — DONE ✅")
     }
@@ -87,6 +111,7 @@ class DictationController: ObservableObject {
     func teardown() {
         hotkeyManager.unregister()
         hotkeyManager.unregisterPTT()
+        hotkeyManager.unregisterTTS()
         audioRecorder.stopRecording()
     }
 
@@ -164,6 +189,68 @@ class DictationController: ObservableObject {
         vfLog("PTT updated — enabled:\(enabled)")
     }
 
+    // MARK: - Queue Dictation While Model Loads
+
+    private func queueDictationAfterLoad() {
+        guard !pendingDictationAfterLoad else { return }
+        pendingDictationAfterLoad = true
+        vfLog("queueDictationAfterLoad — model still loading, queuing start")
+
+        // Show the menu bar icon in loading state (already handled by MenuBarController).
+        // Additionally send a notification so the user knows what is happening.
+        sendModelWaitNotification()
+
+        // Observe isReady: when it flips true, auto-start
+        modelReadyCancellable = LocalWhisperService.shared.$isReady
+            .filter { $0 }
+            .first()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self, self.pendingDictationAfterLoad else { return }
+                self.pendingDictationAfterLoad = false
+                self.modelReadyCancellable = nil
+                vfLog("queueDictationAfterLoad — model ready, auto-starting dictation")
+                self.startDictation()
+            }
+    }
+
+    private func sendModelWaitNotification() {
+        let content = UNMutableNotificationContent()
+        content.title = String(localized: "Loading local AI…")
+        content.body  = String(localized: "Dictation will start automatically when the model is ready.")
+        content.sound = nil
+        let request = UNNotificationRequest(identifier: "model-loading-\(UUID())", content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request)
+    }
+
+    // MARK: - TTS Read Selection
+
+    private func setupTTSHotkey() {
+        let settings = loadSettings()
+        guard settings.ttsHotkeyEnabled else { return }
+        hotkeyManager.registerTTS(keyCode: settings.ttsHotkeyKeyCode, modifiers: settings.ttsHotkeyModifiers)
+        hotkeyManager.onTTSPressed = {
+            Task { await TTSService.shared.speakSelection() }
+        }
+    }
+
+    func updateTTSHotkey(enabled: Bool, keyCode: UInt32, modifiers: UInt32) {
+        var settings = loadSettings()
+        settings.ttsHotkeyEnabled = enabled
+        settings.ttsHotkeyKeyCode = keyCode
+        settings.ttsHotkeyModifiers = modifiers
+        saveSettings(settings)
+
+        hotkeyManager.unregisterTTS()
+        if enabled {
+            hotkeyManager.registerTTS(keyCode: keyCode, modifiers: modifiers)
+            hotkeyManager.onTTSPressed = {
+                Task { await TTSService.shared.speakSelection() }
+            }
+        }
+        vfLog("TTS hotkey updated — enabled:\(enabled) keyCode:\(keyCode) modifiers:\(modifiers)")
+    }
+
     private func setupAudioRecorder() {
         audioRecorder.onLevelUpdate = { [weak self] level in
             self?.audioLevel = level
@@ -207,18 +294,39 @@ class DictationController: ObservableObject {
             // (This commonly happens after rebuilds — macOS revokes permission when app signature changes)
         }
 
-        // Check credits
-        guard creditsManager.canDictate() else {
-            showError("Free trial exhausted. Add your API key in Settings.")
-            return
+        // Check license gate (skip when using local engine)
+        let settings0 = loadSettings()
+        if settings0.transcriptionEngine == .cloud {
+            let lPlan = licenseManager.plan
+            if lPlan == .trial && licenseManager.trialExhausted {
+                showError(String(localized: "Free trial exhausted. Upgrade in Settings."))
+                return
+            }
+            if lPlan == .byok {
+                guard let apiKey = creditsManager.activeAPIKey, !apiKey.isEmpty else {
+                    showError("No API key configured. Open Settings.")
+                    return
+                }
+                vfLog("startDictation — BYOK mode, apiKey length: \(apiKey.count)")
+            } else {
+                guard licenseManager.getJWT() != nil || lPlan == .trial else {
+                    showError("No active license. Open Settings.")
+                    return
+                }
+                vfLog("startDictation — proxy mode, plan: \(lPlan.rawValue)")
+            }
+        } else {
+            // Local engine — if model is still loading, queue and auto-start when ready
+            if !localWhisperService.isReady {
+                if localWhisperService.isLoading {
+                    queueDictationAfterLoad()
+                } else {
+                    showError(String(localized: "Local model not loaded. Open Settings → Local AI."))
+                }
+                return
+            }
+            vfLog("startDictation — local engine, model: \(localWhisperService.loadedModel?.rawValue ?? "?")")
         }
-
-        guard let apiKey = creditsManager.activeAPIKey, !apiKey.isEmpty else {
-            showError("No API key configured. Open Settings.")
-            return
-        }
-
-        vfLog("startDictation — apiKey present (length: \(apiKey.count)), mode: \(creditsManager.mode)")
 
         // Verificar foco (se configurado)
         let settings = loadSettings()
@@ -302,36 +410,92 @@ class DictationController: ObservableObject {
         }
     }
 
+    // MARK: - Retry após falha
+
+    func retryPendingDictation() {
+        guard let url = pendingRetryURL else { return }
+        let duration = pendingRetryDuration
+
+        retryCleanupTask?.cancel()
+        retryCleanupTask = nil
+        pendingRetryURL = nil
+
+        guard let apiKey = creditsManager.activeAPIKey, !apiKey.isEmpty else {
+            showError("No API key configured.")
+            return
+        }
+
+        state = .processing
+        RecordingHUDWindowController.shared.transitionToProcessing()
+
+        dictationTask = Task {
+            await processRecording(url: url, duration: duration)
+        }
+    }
+
     // MARK: - Processar Gravação
 
     private func processRecording(url: URL, duration: TimeInterval) async {
         let settings = loadSettings()
-        guard let apiKey = creditsManager.activeAPIKey else {
-            showError("Sem chave API")
-            return
-        }
-
-        // Vocabulário hint para Whisper
         let vocabularyPrompt = vocabularyManager.generateWhisperPrompt()
+        let plan = licenseManager.plan
 
         do {
-            let lang = settings.language == "auto" ? "auto-detect" : settings.language
-            vfLog("Sending to Whisper — language: \(lang)")
-            let whisperResult = try await whisperService.transcribe(
-                audioURL: url,
-                language: settings.language,
-                apiKey: apiKey,
-                vocabularyHint: vocabularyPrompt
-            )
+            let transcribedText: String
+            let detectedLang: String?
 
-            // Store detected language for next live preview
-            if let detected = whisperResult.detectedLanguage {
+            if settings.transcriptionEngine == .local {
+                // On-device via WhisperKit
+                vfLog("processRecording — local engine")
+                let result = try await localWhisperService.transcribe(
+                    audioURL: url,
+                    language: settings.language,
+                    vocabularyHint: vocabularyPrompt
+                )
+                transcribedText = result.text
+                detectedLang    = result.detectedLanguage
+            } else if plan == .byok {
+                let provider = settings.byokProvider
+                guard let apiKey = KeychainManager.shared.getKey(for: provider) else {
+                    throw WhisperError.noAPIKey
+                }
+                vfLog("processRecording — BYOK → \(provider.displayName)")
+                let result = try await whisperService.transcribe(
+                    audioURL: url,
+                    language: settings.language,
+                    apiKey: apiKey,
+                    vocabularyHint: vocabularyPrompt,
+                    endpoint: provider.endpoint,
+                    model: provider.model
+                )
+                transcribedText = result.text
+                detectedLang    = result.detectedLanguage
+            } else {
+                // trial / pro: proxy (Groq)
+                vfLog("processRecording — proxy (plan: \(plan.rawValue))")
+                let result = try await proxyService.transcribe(
+                    audioURL: url,
+                    language: settings.language,
+                    vocabularyHint: vocabularyPrompt
+                )
+                transcribedText = result.text
+                detectedLang    = result.detectedLanguage
+                if plan == .trial {
+                    licenseManager.recordTrialUsage(seconds: result.seconds)
+                }
+            }
+
+            if let detected = detectedLang {
                 lastDetectedLanguage = detected
                 vfLog("Detected language stored for next live preview: \(detected)")
             }
 
-            var text = whisperResult.text
+            var text = transcribedText
             vfLog("Whisper retornou: '\(text)'")
+
+            // Remover anotações de ruído/som que o Whisper alucina em silêncio ou ruído de fundo.
+            // Exemplos: "[Som de fundo]", "[Música]", "(risos)", "(aplausos)"
+            text = removeWhisperNoiseTokens(text)
 
             // Aplicar substituições de vocabulário
             text = vocabularyManager.apply(to: text)
@@ -352,6 +516,18 @@ class DictationController: ObservableObject {
 
             // Registar uso (só free trial)
             creditsManager.registerUsage(seconds: duration)
+            // Guardar no histórico
+            HistoryManager.shared.add(text: text, duration: duration)
+            // Limpar pending retry (esta transcriçao teve sucesso)
+            pendingRetryURL = nil
+            retryCleanupTask?.cancel()
+            retryCleanupTask = nil
+
+            // Safety net: always put in clipboard BEFORE attempting injection.
+            // Even if injection fails silently, user can recover with ⌘V.
+            let pb = NSPasteboard.general
+            pb.clearContents()
+            pb.setString(text, forType: .string)
 
             // Inject text
             vfLog("Injecting text...")
@@ -398,9 +574,11 @@ class DictationController: ObservableObject {
 
         } catch let error as WhisperError {
             RecordingHUDWindowController.shared.dismiss()
+            storePendingRetry(url: url, duration: duration)
             showError(error.localizedDescription)
         } catch {
             RecordingHUDWindowController.shared.dismiss()
+            storePendingRetry(url: url, duration: duration)
             showError("Unexpected error: \(error.localizedDescription)")
         }
     }
@@ -418,6 +596,44 @@ class DictationController: ObservableObject {
     }
 
     // MARK: - Helpers
+
+    private func storePendingRetry(url: URL, duration: TimeInterval) {
+        retryCleanupTask?.cancel()
+        pendingRetryURL = url
+        pendingRetryDuration = duration
+        // Auto-delete audio after 10 minutes to avoid filling disk
+        retryCleanupTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 600_000_000_000)  // 10 min
+            try? FileManager.default.removeItem(at: url)
+            await MainActor.run { [weak self] in
+                if self?.pendingRetryURL == url {
+                    self?.pendingRetryURL = nil
+                }
+            }
+        }
+    }
+
+    // MARK: - Limpeza de alucinações do Whisper
+
+    /// Remove tokens de ruído/som que o Whisper insere quando detecta silêncio
+    /// ou ruído de fundo: "[Som de fundo]", "[Música]", "(risos)", etc.
+    private func removeWhisperNoiseTokens(_ input: String) -> String {
+        // Padrão: qualquer conteúdo entre [ ] ou ( ) que seja uma anotação de som/ruído.
+        // O Whisper usa tanto maiúsculas como minúsculas, em vários idiomas.
+        let bracketPattern = try? NSRegularExpression(
+            pattern: #"[\[\(][^\]\)]{1,60}[\]\)]"#,
+            options: [.caseInsensitive]
+        )
+        var text = input
+        if let regex = bracketPattern {
+            let range = NSRange(text.startIndex..., in: text)
+            text = regex.stringByReplacingMatches(in: text, range: range, withTemplate: "")
+        }
+        // Limpar espaços múltiplos e espaços antes de pontuação que ficaram
+        text = text.replacingOccurrences(of: "  +", with: " ", options: .regularExpression)
+        text = text.trimmingCharacters(in: .whitespaces)
+        return text
+    }
 
     private func showError(_ message: String) {
         state = .error(message)

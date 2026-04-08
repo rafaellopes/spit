@@ -22,6 +22,17 @@
 	<string>13.0</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>app.getspit.activate</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>spit</string>
+			</array>
+		</dict>
+	</array>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Spit needs microphone access to transcribe your voice to text.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>

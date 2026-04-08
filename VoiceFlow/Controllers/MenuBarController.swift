@@ -15,6 +15,7 @@ class MenuBarController: NSObject {
     private var hostingView: NSHostingView<AnyView>?
     private var dictationController: DictationController
     private var cancellables = Set<AnyCancellable>()
+    private var modelLoadingCancellable: AnyCancellable?
     private var globalClickMonitor: Any?
 
     init(dictationController: DictationController) {
@@ -52,6 +53,7 @@ class MenuBarController: NSObject {
 
         // Observar mudanças de estado para actualizar ícone
         observeState()
+        observeModelLoading()
     }
 
     // MARK: - Content
@@ -77,6 +79,51 @@ class MenuBarController: NSObject {
                 self?.updateIcon(for: state)
             }
             .store(in: &cancellables)
+    }
+
+    // MARK: - Observar carregamento do modelo local
+
+    private func observeModelLoading() {
+        modelLoadingCancellable = LocalWhisperService.shared.$isLoading
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] isLoading in
+                guard let self else { return }
+                // Only show loading indicator if in idle state (don't override recording icon)
+                if case .idle = self.dictationController.state {
+                    if isLoading {
+                        self.startModelLoadingAnimation()
+                    } else {
+                        self.stopModelLoadingAnimation()
+                    }
+                }
+            }
+    }
+
+    private var modelLoadTimer: Timer?
+    private var modelLoadFrame = 0
+    private let modelLoadFrames = ["waveform", "waveform.badge.clock", "waveform", "waveform.badge.clock"]
+
+    private func startModelLoadingAnimation() {
+        guard modelLoadTimer == nil else { return }
+        modelLoadFrame = 0
+        modelLoadTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let button = self.statusItem.button else { return }
+                self.modelLoadFrame = (self.modelLoadFrame + 1) % self.modelLoadFrames.count
+                button.image = NSImage(systemSymbolName: self.modelLoadFrames[self.modelLoadFrame],
+                                       accessibilityDescription: "Loading model…")
+            }
+        }
+        // Also set tooltip
+        statusItem.button?.toolTip = String(localized: "Loading local AI model…")
+    }
+
+    private func stopModelLoadingAnimation() {
+        modelLoadTimer?.invalidate()
+        modelLoadTimer = nil
+        // Restore normal icon
+        updateIcon(for: dictationController.state)
+        statusItem.button?.toolTip = nil
     }
 
     private func updateIcon(for state: DictationState) {
@@ -135,7 +182,7 @@ class MenuBarController: NSObject {
         // Tamanho fixo — evita usar fittingSize antes do primeiro layout SwiftUI
         // que devolve valores não fiáveis (0 ou demasiado grandes)
         let panelWidth: CGFloat  = 300
-        let panelHeight: CGFloat = 280
+        let panelHeight: CGFloat = 320
 
         // 1. Obter o frame do botão em coordenadas de ecrã
         //    NSStatusBarButton.window é sempre não-nil enquanto o statusItem existe.

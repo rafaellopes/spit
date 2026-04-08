@@ -14,7 +14,9 @@ struct ReviewHUDView: View {
     @State private var editedText: String
     @State private var isEditing = false
     @State private var learnedMessage: String? = nil
+    @State private var wordTokens: [WordToken] = []
     @FocusState private var textFieldFocused: Bool
+    @State private var autoDismissToken: UUID = UUID()   // invalidated to cancel pending dismiss
 
     private let cornerRadius: CGFloat = 20
 
@@ -73,8 +75,13 @@ struct ReviewHUDView: View {
         )
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
         .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
-                if !self.isEditing { self.dismiss() }
+            rebuildTokens()
+            scheduleAutoDismiss(after: 8)
+        }
+        .onChange(of: isEditing) { editing in
+            if editing {
+                // User opened the editor — cancel any pending auto-dismiss
+                autoDismissToken = UUID()
             }
         }
     }
@@ -176,23 +183,39 @@ struct ReviewHUDView: View {
                             .fill(Color(nsColor: .textBackgroundColor).opacity(0.5))
                     )
             } else {
-                Text(editedText)
-                    .font(.system(size: 14))
-                    .foregroundColor(Color(nsColor: .labelColor))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .lineLimit(6)
-                    .padding(8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10)
-                            .fill(Color(nsColor: .textBackgroundColor).opacity(0.25))
-                    )
-                    .onTapGesture {
-                        isEditing = true
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                            textFieldFocused = true
-                        }
+                AnnotatedTextView(tokens: wordTokens) { original, corrected, addToVocab in
+                    // User interacted — cancel any pending auto-dismiss
+                    autoDismissToken = UUID()
+                    // Replace word in displayed text
+                    editedText = editedText.replacingOccurrences(of: original, with: corrected)
+                    // Refresh tokens
+                    rebuildTokens()
+                    // Immediately add to vocabulary if requested
+                    if addToVocab {
+                        VocabularyManager.shared.add(wrong: original, correct: corrected)
                     }
+                    // Safety net: copy updated text to clipboard
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(editedText, forType: .string)
+                }
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color(nsColor: .textBackgroundColor).opacity(0.25))
+                )
+                .overlay(alignment: .bottomTrailing) {
+                    // Hint shown only when there are suspicious words
+                    if wordTokens.contains(where: { $0.isSuspicious }) {
+                        HStack(spacing: 3) {
+                            Circle().fill(Color.red).frame(width: 5, height: 5)
+                            Text("Tap a word to correct it")
+                                .font(.system(size: 9))
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(4)
+                    }
+                }
             }
         }
     }
@@ -215,6 +238,7 @@ struct ReviewHUDView: View {
                 Button("Cancel") {
                     editedText = result.correctedText
                     isEditing = false
+                    dismiss()
                 }
                 .font(.system(size: 12))
                 .buttonStyle(.plain)
@@ -281,6 +305,15 @@ struct ReviewHUDView: View {
         dismiss()
     }
 
+    private func scheduleAutoDismiss(after seconds: Double) {
+        let token = autoDismissToken
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
+            // Only dismiss if the token hasn't been replaced (no user interaction)
+            guard self.autoDismissToken == token else { return }
+            self.dismiss()
+        }
+    }
+
     private func dismiss() {
         onDismiss?()
     }
@@ -288,5 +321,10 @@ struct ReviewHUDView: View {
     private func copyToClipboard(_ text: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    private func rebuildTokens() {
+        let suspicious = detectSuspiciousWords(in: editedText)
+        wordTokens = tokenise(editedText, suspicious: suspicious)
     }
 }

@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import AVFoundation
+import UserNotifications
 
 class AppDelegate: NSObject, NSApplicationDelegate {
 
@@ -54,6 +55,47 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         dictationController?.teardown()
+    }
+
+    // MARK: - URL Scheme: spit://activate?token=xxx
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls {
+            guard url.scheme == "spit",
+                  url.host == "activate",
+                  let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+                  let token = components.queryItems?.first(where: { $0.name == "token" })?.value
+            else { continue }
+
+            vfLog("Deep link activation — token: \(token.prefix(8))…")
+            Task { @MainActor in
+                await handleActivation(token: token)
+            }
+        }
+    }
+
+    @MainActor
+    private func handleActivation(token: String) async {
+        sendNotification(title: "Spit", body: String(localized: "Activating license…"))
+
+        do {
+            try await LicenseManager.shared.activate(token: token)
+            sendNotification(title: "Spit", body: String(localized: "License activated! Enjoy Spit."))
+            vfLog("License activated successfully ✅")
+        } catch {
+            sendNotification(title: String(localized: "Activation failed"), body: error.localizedDescription)
+            vfLog("Activation error: \(error.localizedDescription)")
+        }
+    }
+
+    private func sendNotification(title: String, body: String) {
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert]) { _, _ in }
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+        center.add(request)
     }
 
     // MARK: - Abrir Definições

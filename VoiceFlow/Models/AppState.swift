@@ -72,6 +72,19 @@ struct AppSettings: Codable {
     // Interface language: "system" = follow OS, otherwise BCP-47 tag (e.g. "pt", "en", "fr")
     var interfaceLanguage: String = "system"
 
+    // Local transcription
+    var transcriptionEngine: TranscriptionEngine = .cloud
+    var localModel: LocalWhisperModel = .small
+
+    // BYOK provider
+    var byokProvider: BYOKProvider = .openai
+
+    // Read Selection (TTS)
+    var ttsHotkeyEnabled: Bool = false
+    var ttsHotkeyKeyCode: UInt32 = 37    // L key
+    var ttsHotkeyModifiers: UInt32 = 768 // ⌘⇧
+    var ttsVoiceIdentifier: String = ""  // "" = voz padrão do sistema
+
     static let defaults = AppSettings()
 
     // Quick load just the interface language — used before UI initialises
@@ -81,6 +94,120 @@ struct AppSettings: Codable {
             return "system"
         }
         return settings.interfaceLanguage
+    }
+}
+
+// MARK: - Transcription Engine
+
+enum TranscriptionEngine: String, Codable {
+    case cloud  // trial/pro via proxy, or BYOK via OpenAI
+    case local  // on-device via WhisperKit (free, unlimited, offline)
+}
+
+enum LocalWhisperModel: String, Codable, CaseIterable {
+    case tiny       = "openai_whisper-tiny"
+    case base       = "openai_whisper-base"
+    case small      = "openai_whisper-small"
+    case largeTurbo = "openai_whisper-large-v3_turbo"
+
+    var displayName: String {
+        switch self {
+        case .tiny:       return "Tiny"
+        case .base:       return "Base"
+        case .small:      return "Small"
+        case .largeTurbo: return "Large Turbo"
+        }
+    }
+
+    var sizeMB: Int {
+        switch self {
+        case .tiny:       return 75
+        case .base:       return 140
+        case .small:      return 466
+        case .largeTurbo: return 1500
+        }
+    }
+
+    var sizeLabel: String {
+        sizeMB >= 1000 ? String(format: "%.1f GB", Double(sizeMB) / 1000.0) : "\(sizeMB) MB"
+    }
+
+    var typicalLatency: String {
+        switch self {
+        case .tiny:       return "< 1s"
+        case .base:       return "≈ 1s"
+        case .small:      return "≈ 2s"
+        case .largeTurbo: return "≈ 8s"
+        }
+    }
+
+    /// 1 (slowest) → 4 (fastest)
+    var speedRank: Int {
+        switch self {
+        case .tiny:       return 4
+        case .base:       return 3
+        case .small:      return 2
+        case .largeTurbo: return 1
+        }
+    }
+
+    /// 1 (worst) → 4 (best)
+    var qualityRank: Int {
+        switch self {
+        case .tiny:       return 1
+        case .base:       return 2
+        case .small:      return 3
+        case .largeTurbo: return 4
+        }
+    }
+}
+
+// MARK: - BYOK Provider
+
+enum BYOKProvider: String, Codable {
+    case openai
+    case groq
+
+    var displayName: String {
+        switch self {
+        case .openai: return "OpenAI"
+        case .groq:   return "Groq"
+        }
+    }
+
+    var keyPrefix: String {
+        switch self {
+        case .openai: return "sk-"
+        case .groq:   return "gsk_"
+        }
+    }
+
+    var endpoint: URL {
+        switch self {
+        case .openai: return URL(string: "https://api.openai.com/v1/audio/transcriptions")!
+        case .groq:   return URL(string: "https://api.groq.com/openai/v1/audio/transcriptions")!
+        }
+    }
+
+    var model: String {
+        switch self {
+        case .openai: return "whisper-1"
+        case .groq:   return "whisper-large-v3-turbo"
+        }
+    }
+
+    var docsURL: URL {
+        switch self {
+        case .openai: return URL(string: "https://platform.openai.com/api-keys")!
+        case .groq:   return URL(string: "https://console.groq.com/keys")!
+        }
+    }
+
+    var costLabel: String {
+        switch self {
+        case .openai: return "OpenAI charges $0.006 USD/min."
+        case .groq:   return "Groq has a generous free tier. Check console.groq.com for limits."
+        }
     }
 }
 

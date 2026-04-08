@@ -19,8 +19,27 @@ class CreditsManager: ObservableObject {
 
     @Published private(set) var minutesUsed: Double = 0
     @Published private(set) var mode: APIKeyMode = .freeTrial
+    @Published private(set) var totalSecondsTranscribed: Double = 0   // lifetime total
+    @Published private(set) var monthlySecondsTranscribed: Double = 0  // current month only
 
     let freeTrialMinutesTotal: Double = 60  // 60 min grátis
+
+    /// Estimated Whisper cost for the current calendar month — $0.006 / min
+    var estimatedMonthlyCost: Double {
+        monthlySecondsTranscribed / 60.0 * 0.006
+    }
+
+    /// Compact display: "~$0.04 /mo" — always in USD so users worldwide understand the currency
+    var estimatedMonthlyCostFormatted: String {
+        let cost = estimatedMonthlyCost
+        if cost < 0.0001 {
+            return "~$0.00 /mo"
+        } else if cost < 0.01 {
+            return String(format: "~$%.4f /mo", cost)
+        } else {
+            return String(format: "~$%.2f /mo", cost)
+        }
+    }
 
     var freeTrialMinutesRemaining: Double {
         max(0, freeTrialMinutesTotal - minutesUsed)
@@ -41,14 +60,32 @@ class CreditsManager: ObservableObject {
         return KeychainManager.shared.getAPIKey()
     }
 
-    private let minutesUsedKey = "creditsMinutesUsed"
-    private let modeKey = "creditsMode"
+    private let minutesUsedKey    = "creditsMinutesUsed"
+    private let modeKey           = "creditsMode"
+    private let totalSecondsKey   = "creditsTotalSeconds"
+    private let monthlySecondsKey = "creditsMonthlySeconds"
+    private let monthlyPeriodKey  = "creditsMonthlyPeriod"   // stored as "YYYY-MM"
+
+    private var currentMonthPeriod: String {
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM"; return f.string(from: Date())
+    }
 
     private init() {
         minutesUsed = UserDefaults.standard.double(forKey: minutesUsedKey)
+        totalSecondsTranscribed = UserDefaults.standard.double(forKey: totalSecondsKey)
         let savedMode = UserDefaults.standard.string(forKey: modeKey)
         mode = (savedMode == "userKey") ? .userKey : .freeTrial
-        vfLog("CreditsManager.init() — mode: \(mode), minutesUsed: \(minutesUsed)")
+
+        // Load monthly counter — reset if we've rolled into a new month
+        let savedPeriod = UserDefaults.standard.string(forKey: monthlyPeriodKey) ?? ""
+        if savedPeriod == currentMonthPeriod {
+            monthlySecondsTranscribed = UserDefaults.standard.double(forKey: monthlySecondsKey)
+        } else {
+            monthlySecondsTranscribed = 0
+            UserDefaults.standard.set(0, forKey: monthlySecondsKey)
+            UserDefaults.standard.set(currentMonthPeriod, forKey: monthlyPeriodKey)
+        }
+        vfLog("CreditsManager.init() — mode: \(mode), minutesUsed: \(minutesUsed), monthly: \(monthlySecondsTranscribed)s")
 
         // Verificação de chave no Keychain feita de forma assíncrona
         // para evitar bloquear o init (Keychain pode pedir autorização)
@@ -67,7 +104,21 @@ class CreditsManager: ObservableObject {
     // MARK: - Registar Uso
 
     func registerUsage(seconds: TimeInterval) {
-        guard mode == .freeTrial else { return }  // BYOK não tem limite
+        // Lifetime total
+        totalSecondsTranscribed += seconds
+        UserDefaults.standard.set(totalSecondsTranscribed, forKey: totalSecondsKey)
+
+        // Monthly total — reset if month rolled over
+        let period = currentMonthPeriod
+        if UserDefaults.standard.string(forKey: monthlyPeriodKey) != period {
+            monthlySecondsTranscribed = 0
+            UserDefaults.standard.set(period, forKey: monthlyPeriodKey)
+        }
+        monthlySecondsTranscribed += seconds
+        UserDefaults.standard.set(monthlySecondsTranscribed, forKey: monthlySecondsKey)
+
+        // Free trial counter
+        guard mode == .freeTrial else { return }
         let minutes = seconds / 60.0
         minutesUsed += minutes
         UserDefaults.standard.set(minutesUsed, forKey: minutesUsedKey)
@@ -111,13 +162,13 @@ class CreditsManager: ObservableObject {
     var statusMessage: String {
         switch mode {
         case .userKey:
-            return String(localized: "Your API key is active — unlimited usage")
+            return String(localized: "Own key")
         case .freeTrial:
             if freeTrialExhausted {
-                return String(localized: "Free trial exhausted — add your API key")
+                return String(localized: "Trial ended — add your key")
             }
             let remaining = Int(freeTrialMinutesRemaining)
-            return String(format: String(localized: "%d free minutes remaining"), remaining)
+            return String(format: String(localized: "%d min free left"), remaining)
         }
     }
 }

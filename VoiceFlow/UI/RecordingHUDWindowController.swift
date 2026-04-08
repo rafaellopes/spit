@@ -10,7 +10,8 @@ class RecordingHUDWindowController: NSWindowController {
 
     static let shared = RecordingHUDWindowController()
 
-    private var hudState: RecordingHUDState = .recording(words: "")
+    private var hudState: RecordingHUDState = .recording(words: "", startedAt: Date())
+    private var recordingStartedAt: Date = Date()
     private var hostingView: NSHostingView<RecordingHUDView>?
 
     private init() {
@@ -34,21 +35,27 @@ class RecordingHUDWindowController: NSWindowController {
     // MARK: - Show (recording state)
 
     func showRecording() {
-        hudState = .recording(words: "")
+        recordingStartedAt = Date()
+        hudState = .recording(words: "", startedAt: recordingStartedAt)
+        // Force view recreation so @State elapsed resets to 0 for this session
+        hostingView = nil
         presentWithState()
     }
 
     // MARK: - Update rolling words
 
     func updateWords(_ words: String) {
-        hudState = .recording(words: words)
+        // Guard: late async callbacks from LiveSpeechRecognizer can fire after
+        // transitionToProcessing() — ignore them so the "Transcribing…" label sticks.
+        guard case .recording = hudState else { return }
+        hudState = .recording(words: words, startedAt: recordingStartedAt)
         refreshView()
     }
 
     // MARK: - Transition to processing
 
     func transitionToProcessing() {
-        hudState = .processing
+        hudState = .processing(startedAt: Date())
         refreshView()
     }
 
