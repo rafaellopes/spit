@@ -1,199 +1,275 @@
 #!/usr/bin/env bash
-# ─────────────────────────────────────────────────────────────────────────────
-# Spit — Release script
-# Usage: ./scripts/release.sh [version] [build]
-# Example: ./scripts/release.sh 1.1.0 2
+# scripts/release.sh — Spit release pipeline
 #
-# What it does:
-#   1. Updates version in Info.plist
-#   2. Builds Release archive (xcodebuild)
-#   3. Exports .app and creates signed .dmg
-#   4. Uploads DMG to GitHub as new release
-#   5. Updates latest.json on the site
-#   6. Updates download URL in spit-landing.html
-#   7. Commits + pushes (Cloudflare Pages auto-deploys)
-# ─────────────────────────────────────────────────────────────────────────────
+# Uso:
+#   ./scripts/release.sh                    # incrementa build, mantém versão
+#   ./scripts/release.sh --version 2.1      # nova versão + incrementa build
+#   ./scripts/release.sh --build 15         # build explícito
+#   ./scripts/release.sh --dry-run          # tudo excepto push e GitHub release
+#
+# Pré-requisitos (primeira vez):
+#   1. brew install create-dmg
+#   2. xcrun notarytool store-credentials "spit-notary" \
+#        --apple-id "rafa@rafamail.com" --team-id "R6VWLH887N" --password "<app-specific-pwd>"
+#   3. Chave privada Sparkle em ~/.config/spit/sparkle_ed25519_private.pem
+
 set -euo pipefail
 
+# ── Configuração ────────────────────────────────────────────────────────────────
+
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-PROJ="$REPO_ROOT/VoiceFlow.xcodeproj"
+PROJECT="$REPO_ROOT/VoiceFlow.xcodeproj"
 SCHEME="VoiceFlow"
-PLIST="$REPO_ROOT/VoiceFlow/Resources/Info.plist"
-LANDING="$REPO_ROOT/spit-landing.html"
+SIGNING_IDENTITY="Developer ID Application: Rafael Lopes (R6VWLH887N)"
+TEAM_ID="R6VWLH887N"
+NOTARY_PROFILE="spit-notary"
+PRIVATE_KEY="$HOME/.config/spit/sparkle_ed25519_private.pem"
+APPCAST="$REPO_ROOT/appcast.xml"
 LATEST_JSON="$REPO_ROOT/latest.json"
-ARCHIVES_DIR="$REPO_ROOT/.build/archives"
-EXPORTS_DIR="$REPO_ROOT/.build/export"
-DMG_DIR="$REPO_ROOT/.build/dmg"
+INFO_PLIST="$REPO_ROOT/VoiceFlow/Resources/Info.plist"
+GITHUB_REPO="rafaellopes/spit"
 
-# ── Version args ──────────────────────────────────────────────────────────────
-VERSION="${1:-}"
-BUILD="${2:-}"
+# ── Parse args ──────────────────────────────────────────────────────────────────
 
-if [ -z "$VERSION" ]; then
-  CURRENT_VER=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" "$PLIST")
-  read -p "Version [$CURRENT_VER]: " VERSION
-  VERSION="${VERSION:-$CURRENT_VER}"
-fi
+DRY_RUN=false
+NEW_VERSION=""
+NEW_BUILD=""
 
-if [ -z "$BUILD" ]; then
-  CURRENT_BUILD=$(/usr/libexec/PlistBuddy -c "Print CFBundleVersion" "$PLIST")
-  NEXT_BUILD=$((CURRENT_BUILD + 1))
-  read -p "Build number [$NEXT_BUILD]: " BUILD
-  BUILD="${BUILD:-$NEXT_BUILD}"
-fi
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --dry-run)   DRY_RUN=true; shift ;;
+        --version)   NEW_VERSION="$2"; shift 2 ;;
+        --build)     NEW_BUILD="$2"; shift 2 ;;
+        *) echo "Argumento desconhecido: $1"; exit 1 ;;
+    esac
+done
 
-TAG="v$VERSION"
-DMG_NAME="Spit.dmg"
-ARCHIVE_PATH="$ARCHIVES_DIR/Spit-$VERSION.xcarchive"
+# ── Helpers ─────────────────────────────────────────────────────────────────────
 
-echo ""
-echo "▶ Releasing Spit $VERSION (build $BUILD) → $TAG"
-echo ""
+log()  { echo "▸ $*"; }
+ok()   { echo "✅ $*"; }
+fail() { echo "❌ $*" >&2; exit 1; }
 
-# ── Preflight ─────────────────────────────────────────────────────────────────
-command -v gh >/dev/null 2>&1 || { echo "❌ gh CLI not found. Install: brew install gh"; exit 1; }
-gh auth status >/dev/null 2>&1 || { echo "❌ Not logged in to gh. Run: gh auth login"; exit 1; }
+# ── Verificar pré-requisitos ────────────────────────────────────────────────────
 
-# Check tag doesn't already exist
-if gh release view "$TAG" --repo rafaellopes/spit >/dev/null 2>&1; then
-  echo "❌ Release $TAG already exists on GitHub. Bump the version."
-  exit 1
-fi
+log "A verificar pré-requisitos…"
 
-# ── Kill running Spit ─────────────────────────────────────────────────────────
-echo "⏹  Stopping Spit..."
-kill $(pgrep Spit) 2>/dev/null || true
+[[ -f "$PRIVATE_KEY" ]] || fail "Chave privada Sparkle não encontrada: $PRIVATE_KEY"
 
-# ── Update Info.plist ─────────────────────────────────────────────────────────
-echo "📝 Updating version → $VERSION ($BUILD)..."
-/usr/libexec/PlistBuddy -c "Set CFBundleShortVersionString $VERSION" "$PLIST"
-/usr/libexec/PlistBuddy -c "Set CFBundleVersion $BUILD" "$PLIST"
+SIGN_UPDATE=$(find ~/Library/Developer/Xcode/DerivedData -path "*/artifacts/sparkle/Sparkle/bin/sign_update" 2>/dev/null | head -1)
+[[ -n "$SIGN_UPDATE" ]] || fail "sign_update não encontrado. Corre: xcodebuild -project VoiceFlow.xcodeproj -resolvePackageDependencies"
 
-# ── Build Release archive ──────────────────────────────────────────────────────
-mkdir -p "$ARCHIVES_DIR"
-echo "🔨 Building Release archive (this takes a while)..."
-xcodebuild archive \
-  -project "$PROJ" \
-  -scheme "$SCHEME" \
-  -configuration Release \
-  -destination "generic/platform=macOS" \
-  -archivePath "$ARCHIVE_PATH" \
-  CODE_SIGN_IDENTITY="Apple Development" \
-  2>&1 | grep -E "error:|warning:|BUILD|Compiling|Linking|Archive" | tail -20
+command -v gh >/dev/null || fail "gh CLI não instalado: brew install gh"
+command -v create-dmg >/dev/null || fail "create-dmg não instalado: brew install create-dmg"
 
-if [ ! -d "$ARCHIVE_PATH" ]; then
-  echo "❌ Archive failed — check build output above"
-  exit 1
-fi
-echo "✅ Archive created"
+xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" &>/dev/null || \
+    fail "Perfil de notarização '$NOTARY_PROFILE' inválido.
+Executa:
+  xcrun notarytool store-credentials '$NOTARY_PROFILE' \\
+    --apple-id rafa@rafamail.com \\
+    --team-id $TEAM_ID \\
+    --password <app-specific-password>"
 
-# ── Export .app ───────────────────────────────────────────────────────────────
-mkdir -p "$EXPORTS_DIR"
-EXPORT_PLIST=$(mktemp /tmp/spit-export-XXXXXX.plist)
-cat > "$EXPORT_PLIST" << 'PLIST_EOF'
+ok "Pré-requisitos OK"
+
+# ── Ler versão atual ────────────────────────────────────────────────────────────
+
+CURRENT_VERSION=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" "$INFO_PLIST")
+CURRENT_BUILD=$(/usr/libexec/PlistBuddy -c "Print CFBundleVersion" "$INFO_PLIST")
+
+VERSION="${NEW_VERSION:-$CURRENT_VERSION}"
+BUILD="${NEW_BUILD:-$((CURRENT_BUILD + 1))}"
+
+log "Versão: $CURRENT_VERSION (build $CURRENT_BUILD) → $VERSION (build $BUILD)"
+
+# ── Actualizar Info.plist ───────────────────────────────────────────────────────
+
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$INFO_PLIST"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD" "$INFO_PLIST"
+ok "Info.plist actualizado: $VERSION ($BUILD)"
+
+# ── Build (Archive) ─────────────────────────────────────────────────────────────
+
+ARCHIVE_PATH="/tmp/Spit-$VERSION-$BUILD.xcarchive"
+[[ -d "$ARCHIVE_PATH" ]] && rm -rf "$ARCHIVE_PATH"
+
+log "A compilar em Release (pode demorar 2-3 min)…"
+xcodebuild \
+    -project "$PROJECT" \
+    -scheme "$SCHEME" \
+    -configuration Release \
+    -archivePath "$ARCHIVE_PATH" \
+    archive \
+    DEVELOPMENT_TEAM="$TEAM_ID" \
+    ENABLE_HARDENED_RUNTIME=YES \
+    2>&1 | grep -E "^(error:|Build|Archive|FAILED|SUCCEEDED)" || true
+
+[[ -d "$ARCHIVE_PATH" ]] || fail "Archive falhou"
+ok "Archive criado"
+
+# ── Export .app ─────────────────────────────────────────────────────────────────
+
+EXPORT_PATH="/tmp/Spit-export-$BUILD"
+[[ -d "$EXPORT_PATH" ]] && rm -rf "$EXPORT_PATH"
+
+EXPORT_OPTIONS="/tmp/spit-export-options.plist"
+cat > "$EXPORT_OPTIONS" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>method</key>
-  <string>development</string>
-  <key>teamID</key>
-  <string>R6VWLH887N</string>
+    <key>method</key>
+    <string>developer-id</string>
+    <key>teamID</key>
+    <string>$TEAM_ID</string>
+    <key>signingStyle</key>
+    <string>manual</string>
+    <key>signingCertificate</key>
+    <string>$SIGNING_IDENTITY</string>
 </dict>
 </plist>
-PLIST_EOF
+PLIST
 
-echo "📦 Exporting .app..."
 xcodebuild -exportArchive \
-  -archivePath "$ARCHIVE_PATH" \
-  -exportPath "$EXPORTS_DIR" \
-  -exportOptionsPlist "$EXPORT_PLIST" \
-  2>&1 | grep -E "error:|Export|Packaging" | tail -10
-rm -f "$EXPORT_PLIST"
+    -archivePath "$ARCHIVE_PATH" \
+    -exportPath "$EXPORT_PATH" \
+    -exportOptionsPlist "$EXPORT_OPTIONS" \
+    2>&1 | grep -E "^(error:|Export|FAILED|SUCCEEDED)" || true
 
-APP_PATH=$(find "$EXPORTS_DIR" -name "*.app" -maxdepth 2 | head -1)
-if [ -z "$APP_PATH" ]; then
-  echo "❌ Export failed — .app not found"
-  exit 1
-fi
-echo "✅ Exported: $APP_PATH"
+APP_PATH="$EXPORT_PATH/Spit.app"
+[[ -d "$APP_PATH" ]] || fail "Export falhou — Spit.app não encontrado em $EXPORT_PATH"
+ok "App exportada: $APP_PATH"
 
-# ── Create DMG ────────────────────────────────────────────────────────────────
-mkdir -p "$DMG_DIR"
-FINAL_DMG="$DMG_DIR/$DMG_NAME"
-TMP_DMG="$DMG_DIR/tmp_$DMG_NAME"
-rm -f "$FINAL_DMG" "$TMP_DMG"
+# ── Criar DMG ───────────────────────────────────────────────────────────────────
 
-echo "💿 Creating DMG..."
-# Temp writable DMG
-hdiutil create -size 200m -volname "Spit" -srcfolder "$APP_PATH" \
-  -ov -format UDRW "$TMP_DMG" >/dev/null
+DMG_NAME="Spit-$VERSION.dmg"
+DMG_PATH="/tmp/$DMG_NAME"
+[[ -f "$DMG_PATH" ]] && rm "$DMG_PATH"
 
-# Mount, add Applications symlink
-MOUNT_DIR=$(hdiutil attach "$TMP_DMG" | grep Volumes | awk '{print $3}')
-ln -s /Applications "$MOUNT_DIR/Applications" 2>/dev/null || true
-hdiutil detach "$MOUNT_DIR" >/dev/null
+log "A criar DMG…"
+create-dmg \
+    --volname "Spit $VERSION" \
+    --window-pos 200 120 \
+    --window-size 600 400 \
+    --icon-size 100 \
+    --icon "Spit.app" 175 190 \
+    --hide-extension "Spit.app" \
+    --app-drop-link 425 190 \
+    "$DMG_PATH" \
+    "$APP_PATH" 2>&1 | tail -2
 
-# Convert to compressed read-only
-hdiutil convert "$TMP_DMG" -format UDZO -o "$FINAL_DMG" >/dev/null
-rm -f "$TMP_DMG"
-echo "✅ DMG created: $FINAL_DMG ($(du -sh "$FINAL_DMG" | cut -f1))"
+[[ -f "$DMG_PATH" ]] || fail "create-dmg falhou"
+ok "DMG criado: $(du -sh "$DMG_PATH" | cut -f1)"
 
-# ── Prompt for release notes ──────────────────────────────────────────────────
-echo ""
-echo "📝 Enter release notes (empty line to finish):"
-NOTES=""
-while IFS= read -r line; do
-  [ -z "$line" ] && break
-  NOTES="$NOTES$line\n"
-done
-[ -z "$NOTES" ] && NOTES="Spit $VERSION — bug fixes and improvements.\n"
+# ── Notarizar ───────────────────────────────────────────────────────────────────
 
-# ── Upload to GitHub ──────────────────────────────────────────────────────────
-echo ""
-echo "🚀 Uploading to GitHub releases..."
-gh release create "$TAG" \
-  --repo rafaellopes/spit \
-  --title "Spit $VERSION" \
-  --notes "$(printf "$NOTES")" \
-  "$FINAL_DMG"
-echo "✅ GitHub release $TAG published"
+log "A submeter para notarização (1-5 min)…"
+xcrun notarytool submit "$DMG_PATH" \
+    --keychain-profile "$NOTARY_PROFILE" \
+    --wait \
+    2>&1 | grep -E "status:|id:|createdDate"
 
-# ── Generate latest.json ──────────────────────────────────────────────────────
-DOWNLOAD_URL="https://github.com/rafaellopes/spit/releases/download/$TAG/$DMG_NAME"
-RELEASE_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+log "A staple o ticket de notarização…"
+xcrun stapler staple "$DMG_PATH"
+ok "Notarizado e stappled"
 
-cat > "$LATEST_JSON" << JSON_EOF
+# ── Assinar com Sparkle ─────────────────────────────────────────────────────────
+
+log "A assinar DMG com chave EdDSA…"
+
+# sign_update emite uma linha XML; extraímos só o valor da assinatura
+SIGN_OUTPUT=$("$SIGN_UPDATE" --ed-key-file "$PRIVATE_KEY" "$DMG_PATH" 2>&1)
+SIGNATURE=$(echo "$SIGN_OUTPUT" | grep -o 'sparkle:edSignature="[^"]*"' | sed 's/sparkle:edSignature="\([^"]*\)"/\1/')
+DMG_SIZE=$(stat -f%z "$DMG_PATH")
+
+[[ -n "$SIGNATURE" ]] || fail "Falhou a gerar assinatura EdDSA. Output:\n$SIGN_OUTPUT"
+ok "Assinatura EdDSA gerada"
+
+# ── Atualizar appcast.xml ───────────────────────────────────────────────────────
+
+RELEASE_DATE=$(date -u "+%a, %d %b %Y %H:%M:%S +0000")
+GITHUB_URL="https://github.com/$GITHUB_REPO/releases/download/v$VERSION/$DMG_NAME"
+
+log "A actualizar appcast.xml…"
+cat > "$APPCAST" <<XML
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+    <channel>
+        <title>Spit</title>
+        <link>https://getspit.app</link>
+        <description>Spit release history</description>
+        <language>en</language>
+        <item>
+            <title>Spit $VERSION</title>
+            <pubDate>$RELEASE_DATE</pubDate>
+            <sparkle:version>$BUILD</sparkle:version>
+            <sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description><![CDATA[
+                <p>Changelog completo em <a href="https://github.com/$GITHUB_REPO/releases/tag/v$VERSION">GitHub</a>.</p>
+            ]]></description>
+            <enclosure
+                url="$GITHUB_URL"
+                sparkle:edSignature="$SIGNATURE"
+                length="$DMG_SIZE"
+                type="application/octet-stream"/>
+        </item>
+    </channel>
+</rss>
+XML
+
+ok "appcast.xml actualizado"
+
+# ── Atualizar latest.json ───────────────────────────────────────────────────────
+
+TODAY=$(date -u "+%Y-%m-%dT%H:%M:%SZ")
+cat > "$LATEST_JSON" <<JSON
 {
   "version": "$VERSION",
   "build": $BUILD,
-  "date": "$RELEASE_DATE",
-  "url": "$DOWNLOAD_URL",
-  "notes": "$(printf "$NOTES" | tr '\n' ' ' | sed 's/  */ /g')",
-  "min_os": "13.0"
+  "date": "$TODAY",
+  "url": "$GITHUB_URL",
+  "notes": "Changelog: https://github.com/$GITHUB_REPO/releases/tag/v$VERSION",
+  "min_os": "14.0"
 }
-JSON_EOF
-echo "✅ latest.json updated"
+JSON
 
-# ── Update download URL in landing page ──────────────────────────────────────
-echo "🌐 Updating spit-landing.html..."
-sed -i '' "s|releases/download/v[0-9][0-9.]*/Spit\.dmg|releases/download/$TAG/Spit.dmg|g" "$LANDING"
-echo "✅ Landing page updated"
+ok "latest.json actualizado"
 
-# ── Commit + push (triggers Cloudflare Pages deploy) ──────────────────────────
-echo "🔄 Committing and pushing..."
-cd "$REPO_ROOT"
-git add "$PLIST" "$LANDING" "$LATEST_JSON"
-git commit -m "chore: release $VERSION (build $BUILD)"
-git push origin main
-echo "✅ Pushed — Cloudflare Pages will deploy in ~30s"
+# ── Dry-run: parar aqui ─────────────────────────────────────────────────────────
 
-# ── Done ──────────────────────────────────────────────────────────────────────
+if [[ "$DRY_RUN" == "true" ]]; then
+    echo ""
+    echo "── DRY RUN completo ──────────────────────────────────────────────"
+    echo "   DMG:        $DMG_PATH"
+    echo "   Assinatura: ${SIGNATURE:0:30}…"
+    echo "   (GitHub release e git push não executados)"
+    exit 0
+fi
+
+# ── Criar GitHub Release e fazer upload do DMG ──────────────────────────────────
+
+TAG="v$VERSION"
+log "A criar release $TAG no GitHub…"
+
+gh release create "$TAG" "$DMG_PATH" \
+    --repo "$GITHUB_REPO" \
+    --title "Spit $VERSION" \
+    --notes "Vê o [CHANGELOG](https://github.com/$GITHUB_REPO/blob/main/CHANGELOG.md) para detalhes desta versão." \
+    --latest
+
+ok "GitHub release criada"
+
+# ── Commit e push ───────────────────────────────────────────────────────────────
+
+log "A commitar e fazer push…"
+git -C "$REPO_ROOT" add "$APPCAST" "$LATEST_JSON" "$INFO_PLIST"
+git -C "$REPO_ROOT" commit -m "chore: release Spit $VERSION (build $BUILD)"
+git -C "$REPO_ROOT" push origin main
+
+ok "Push concluído"
+
 echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  ✅ Spit $VERSION released!"
-echo ""
-echo "  GitHub:   https://github.com/rafaellopes/spit/releases/tag/$TAG"
-echo "  Download: $DOWNLOAD_URL"
-echo "  Site:     https://getspit.app (deploying now)"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "🚀 Spit $VERSION (build $BUILD) publicado!"
+echo "   https://github.com/$GITHUB_REPO/releases/tag/$TAG"
+echo "   Os utilizadores serão notificados em até 24h via Sparkle."
