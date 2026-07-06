@@ -34,20 +34,18 @@ consegue chegar ao Rafael e à Draxo.** Sem CTA, sem "sobre nós" gigante — s�
 os sinais discretos que a comunidade indie reconhece.
 
 ### Ações
-- [ ] **Página `/about` no site** — a história em 1.ª pessoa: porque construí o
-      Spit, quem sou, o que é a Draxo.io (estúdio de software indie). Foto real,
-      nome real, links (GitHub, X/Mastodon, email). É *a* peça central da
-      atribuição. (Modelo: páginas "about" de indie devs Mac — curtas, humanas.)
-- [ ] **Footer do site** — linha discreta: `A Draxo.io project · made by Rafael Lopes`
-      com links. Aparece em todas as páginas.
-- [ ] **`humans.txt`** na raiz do site — sinal clássico de dev ("/humans.txt").
-      Nome, papel, contacto, stack. Custa 2 min, fala com a tribo certa.
+- [x] **Página `/about` no site** — publicada em getspit.app/about. **Ainda tem
+      `[RASCUNHO]`** — o texto pessoal (porquê construíste o Spit, o que é a
+      Draxo, factos biográficos) precisa da tua revisão antes de ser definitivo.
+- [x] **Footer do site** — "Um projeto Draxo.io, por Rafael Lopes" em todas as
+      15 línguas, com links.
+- [x] **`humans.txt`** na raiz do site.
 - [ ] **Consistência de identidade** — mesma foto/handle/bio no GitHub, site, X,
-      HN, Product Hunt. Um curioso que salte entre plataformas reconhece a mesma
-      pessoa. Isto sozinho constrói mais confiança que qualquer copy.
+      HN, Product Hunt. Ainda por fazer — depende de teres esses perfis definidos.
 - [ ] **GitHub profile README** (`rafaellopes/rafaellopes`) — 1 parágrafo: quem
       és, Draxo.io, os teus projetos. É a página que abre quando clicam no teu nome.
-- [ ] Já feito no app: nome real no *About*. Adicionar link "Made by Draxo.io".
+- [ ] Link "Made by Draxo.io" dentro do *About* nativo da app (`AboutView.swift`)
+      — o About do site já tem, o About do **app** ainda não foi tocado.
 
 ---
 
@@ -59,23 +57,20 @@ privado**. O ficheiro local `spit-landing.html` está ainda mais desatualizado
 que a versão live — não usar como base sem rever.
 
 ### Ações
-- [ ] **Reescrever o hero** para a nova realidade: "Ditado por voz no teu Mac.
-      Grátis. Privado. Open-source." Remover qualquer menção a planos/subscrição/BYOK
-      como requisito.
-- [ ] **Secção "Porquê confiar"** — não "features", mas provas: 100% on-device
-      (link ao código que o prova), MIT (link ao LICENSE), sem telemetria, sem conta.
+- [x] **Reescrever o hero** — feito em 15 línguas: grátis/open/on-device,
+      sem trial/subscrição/App Store.
+- [ ] **Secção "Porquê confiar"** dedicada — hoje há links dispersos (footer,
+      pricing_note) ao código/MIT, mas não uma secção própria com essa promessa
+      em destaque. Ainda por fazer.
 - [ ] **Comparação honesta** — tabela vs superwhisper / Wispr Flow / MacWhisper.
-      Factual, sem trash-talk. Isto capta quem já procura "superwhisper alternative".
-- [ ] **SEO** — meta tags + conteúdo para as queries reais:
-      `free dictation mac`, `open source voice to text mac`, `superwhisper alternative`,
-      `whisper dictation mac`, `private speech to text mac`, `wispr flow alternative`.
-      Cada uma é uma landing/secção com intenção clara.
-- [ ] **`/about`** (ver Pilar A).
-- [ ] **Changelog público** (`/changelog` ou reusa o `CHANGELOG.md`) — sinal de
-      projeto vivo. Cada release nova = uma razão para voltar + conteúdo indexável.
-- [ ] **OpenGraph / Twitter cards** — quando alguém partilha o link, aparece um
-      cartão bonito com screenshot. Barato, multiplica cliques.
-- [ ] **Botão download único e óbvio** → GitHub Releases (`.dmg` notarizado).
+      Ainda não existe no site. Isto capta quem já procura "superwhisper alternative".
+- [~] **SEO** — meta description + OpenGraph feitos. Falta o conteúdo dedicado
+      por query (`superwhisper alternative`, `wispr flow alternative`, etc.) —
+      a comparação acima resolveria isto ao mesmo tempo.
+- [x] **`/about`** — ver Pilar A.
+- [ ] **Changelog público** — ainda não existe no site.
+- [x] **OpenGraph / Twitter cards** — feito, com `og.png` existente.
+- [x] **Botão download único e óbvio** → GitHub Releases, em toda a UI.
 
 ---
 
@@ -85,25 +80,25 @@ O README já é bom. Falta transformá-lo de "documentação" em **montra + prov
 social + porta de entrada para a pessoa por trás**.
 
 ### Ações
-- [ ] **GIF/vídeo no topo do README** — 10s a mostrar ditado real numa app. É o
-      maior multiplicador de conversão num repo. (Grava com o próprio Spit + Kap.)
-- [ ] **Screenshots** — HUD, menu bar, settings.
-- [ ] **Topics do repo** — `macos`, `dictation`, `speech-to-text`, `whisper`,
-      `swift`, `privacy`, `on-device`, `open-source`, `accessibility`, `menubar`.
-      É como o GitHub te encontra em Explore/Topics.
-- [ ] **`FUNDING.yml`** — GitHub Sponsors / Ko-fi. Não para monetizar, mas porque
-      é o sinal universal de "há uma pessoa real que podes apoiar". Reforça a
-      atribuição sem ser comercial.
-- [ ] **`SECURITY.md`** — como reportar vulnerabilidades. Sinal de maturidade e
-      de que levas a privacidade a sério (coerente com a proposta).
-- [ ] **`CONTRIBUTING.md`** — já há uma secção no README; extrair para ficheiro.
-- [ ] **Release notes ricas** — cada release do GitHub com changelog legível
-      (não só "build 11"). É a primeira coisa que um avaliador lê.
-- [ ] **Autor visível** — badge/linha no README: "Built by [Rafael Lopes](.) at
-      [Draxo.io](https://draxo.io)". Fecha o loop de atribuição.
-- [ ] **Entrar em awesome-lists** (PRs): `awesome-macos`, `awesome-swift`,
-      `awesome-privacy`, `awesome-selfhosted`-adjacentes, `awesome-macos-command-line`.
-      Cada merge = backlink permanente + descoberta orgânica.
+- [ ] **GIF/vídeo no topo do README** — **fica para ti** (é o teu Mac, o teu
+      fluxo real). TODO já marcado no README. É o maior multiplicador de
+      conversão num repo — o item mais valioso ainda em aberto.
+- [ ] **Screenshots** — HUD, menu bar, settings. Também precisa de correr no
+      teu Mac.
+- [x] **Topics do repo** — definidos: macos, dictation, speech-to-text, whisper,
+      swift, privacy, on-device, open-source, accessibility, menubar, voice-recognition.
+- [ ] **`FUNDING.yml`** — **bloqueado**: precisa de teres uma conta GitHub
+      Sponsors ou Ko-fi criada primeiro (não crio contas por ti).
+- [x] **`SECURITY.md`**.
+- [x] **`CONTRIBUTING.md`**.
+- [ ] **Release notes ricas** — a v2.0 ainda só tem notas genéricas a apontar
+      para o CHANGELOG. Ainda por fazer.
+- [x] **Autor visível** — crédito Draxo/Rafael no README.
+- [~] **Entrar em awesome-lists**:
+      - [x] `awesome-mac` — PR aberto: [jaywcjlove/awesome-mac#2248](https://github.com/jaywcjlove/awesome-mac/pull/2248)
+      - [ ] `awesome-whisper` — texto pronto, **bloqueado**: exigem 100+ stars, Spit tem 0
+      - [ ] `awesome-voice-typing` — **bloqueado**: exigem ~50 stars
+      - `awesome-swift` e `awesome-privacy` — descartados, fora de scope (confirmado)
 
 ---
 
@@ -114,10 +109,9 @@ que certas comunidades adoram. Um único lançamento bem feito pode trazer os
 primeiros milhares. Ordenado por fit:
 
 ### 4.1 Show HN (Hacker News) — canal nº 1 para este produto
-- [ ] Título: `Show HN: Spit – On-device voice dictation for Mac, free and open source`
-- [ ] Primeiro comentário do autor: a história curta (porque o construí, porque é
-      on-device, o que é a Draxo). HN premeia o solo founder honesto.
-- [ ] Postar 3.ª/4.ª de manhã (horário US ET). Estar disponível 4-6h para responder.
+- [x] Rascunho pronto em `SHOW-HN-DRAFT.md` — título, URL a submeter, primeiro
+      comentário completo, notas de timing.
+- [ ] **Falta**: tu leres/ajustares e publicares (tem de ser da tua conta).
 - [ ] **Não** pedir upvotes. Não fazer astroturfing. HN deteta e pune.
 
 ### 4.2 Product Hunt
@@ -142,8 +136,9 @@ primeiros milhares. Ordenado por fit:
 - [ ] **Comunidade de acessibilidade** — RSI, dislexia, mobilidade reduzida.
       Parcerias/menções com criadores desse nicho. É o público onde o Spit muda
       vidas, não só poupa cliques — e onde a autenticidade é obrigatória.
-- [ ] **Homebrew Cask** — `brew install --cask spit`. Sinal de legitimidade para
-      devs + canal de instalação sem fricção.
+- [ ] **Homebrew Cask** — formula pronta e testada (`brew style` limpo, SHA256
+      confirmado). **Bloqueado**: regra escrita deles exige 75+ stars (225+ para
+      auto-submissão, que é o nosso caso). Submeter assim que houver tracção.
 
 ---
 
@@ -156,6 +151,28 @@ primeiros milhares. Ordenado por fit:
       com o Jetsam" — a comunidade dev adora estas histórias técnicas reais).
 - [ ] **Responder a quem menciona** superwhisper/Wispr no X e Reddit, com utilidade,
       não spam.
+
+---
+
+## 6.5 Monetização — decisão open-core faseado (2026-07-05)
+
+**Decisão do Rafael:** não vender agora; lançar grátis e introduzir um tier pago
+mais tarde, por cima do core gratuito. Racional: vender hoje rende ~€0 (sem
+audiência) e queima a narrativa "grátis para sempre" acabada de publicar em 15
+línguas; o código core já é MIT/público de qualquer forma.
+
+**Modelo:** open-core (à VoiceInk/Obsidian/Raycast)
+- **Core MIT, grátis para sempre** — ditado local. A promessa pública nunca é revertida.
+- **Spit Pro (closed-source, pago)** — features que não competem com a promessa:
+  vozes TTS premium, sync de vocabulário entre Macs, modelos maiores geridos,
+  integrações. Infra de licenças (LicenseManager/JWT/Worker) já existe, fica em espera.
+
+**Critérios para activar o Pro (avaliar aos 3-6 meses):**
+- [ ] ≥ 500 stars GitHub **ou** ≥ 2.000 downloads acumulados
+- [ ] Sinais de procura orgânica (issues/emails a pedir features premium)
+- [ ] Retenção 30 dias > 25% (Sparkle check-ins)
+
+Enquanto os critérios não se cumprirem: só doações (Ko-fi) + foco em distribuição.
 
 ---
 

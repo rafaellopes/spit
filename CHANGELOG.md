@@ -8,6 +8,20 @@ Ordem: mais recente em cima.
 
 ---
 
+## 2026-07-06 — Modelo de ditado descarregava com demasiada frequência
+
+**Ficheiros**: `App/AppDelegate.swift`
+
+**Sintoma**: Depois de pouco tempo sem usar, o modelo Whisper já estava descarregado e o próximo Globe demorava ~10s a recarregar. O utilizador sentia isto como "descarrega cedo demais".
+
+**Causa raiz**: `setupMemoryPressureHandler` reagia a **qualquer** nível de pressão (`warning` incluído) descarregando TTS **e** Whisper. Em sistemas sob uso normal o evento `warning` dispara várias vezes por hora, causando unload/reload constante do modelo de ditado (466 MB), com o custo de reload a cair sobre ditados aleatórios.
+
+**Fix**: distinguir os níveis — em `warning` (frequente) só descarrega o TTS (1.7 GB, o maior consumidor e menos sensível a latência); o Whisper só descarrega em `critical` (raro, risco real de Jetsam). O ditado mantém-se quente na esmagadora maioria dos casos.
+
+**Lição**: `warning` de pressão de memória não é raro — é ruído de fundo em máquinas com uso normal. Reagir a ele com a mesma agressividade que a `critical` penaliza a experiência sem ganho real de estabilidade.
+
+---
+
 ## 2026-04-29 — Ditado longo (>90s) falhava silenciosamente, texto perdido
 
 **Ficheiros**: `Controllers/DictationController.swift`, `UI/HUDCoordinator.swift`, `UI/RecordingHUDView.swift`

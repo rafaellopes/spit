@@ -55,3 +55,7 @@ scripts/
 # Claude
 .claude/commands/
 .claude/rules/
+
+# pAInel (dashboard local de sessão)
+.painel-board.json
+.painel-board.json.*
